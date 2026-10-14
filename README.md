@@ -1,8 +1,9 @@
 # Pixel Window
 
-A full-screen 192×128 pixel-art cityscape with apartment blocks, street lamps,
-and traffic. The sky follows the Raspberry Pi's local clock: the sun crosses
-the sky from 06:00 to 18:00, and the moon and twinkling stars appear at night.
+A 192×128 pixel-art view from a cozy room onto a dense neighborhood street,
+with a framed window, apartment facades, shopfronts, blinds, plants, books, and
+a warm desk lamp. The sky follows the Raspberry Pi's local clock: the sun
+crosses the sky from 06:00 to 18:00, and the moon and stars appear at night.
 
 ## Run on the matrix
 
