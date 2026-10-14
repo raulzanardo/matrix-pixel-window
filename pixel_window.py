@@ -3,6 +3,7 @@
 
 import argparse
 import configparser
+from datetime import datetime
 import math
 import time
 from pathlib import Path
@@ -18,8 +19,14 @@ def blend(first, second, amount):
     return tuple(round(a + (b - a) * amount) for a, b in zip(first, second))
 
 
+def local_clock_phase(now=None):
+    now = now or datetime.now().astimezone()
+    seconds = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1_000_000
+    return seconds / 86_400
+
+
 def draw_scene(phase, elapsed=0.0):
-    """Render one frame. phase runs from midnight (0) through the day (0.5)."""
+    """Render a frame for a local-time phase from midnight (0) to midnight (1)."""
     daytime = max(0.0, math.cos(2 * math.pi * (phase - 0.5)))
     night = 1.0 - daytime
     image = Image.new("RGB", (WIDTH, HEIGHT), (9, 17, 48))
@@ -44,52 +51,88 @@ def draw_scene(phase, elapsed=0.0):
             draw.point((x + 1, y), fill=star)
             draw.point((x, y + 1), fill=star)
 
-    # A small sun follows an arc; the crescent moon occupies the opposite sky.
-    sun_x = round(24 + (phase % 1.0) * 143)
-    sun_y = round(53 - 30 * math.sin(math.pi * (phase % 1.0)))
+    # Blocky clouds drift across the sky behind the celestial bodies.
+    cloud_color = blend((61, 74, 113), (239, 247, 248), daytime)
+    for base_x, y, width in ((37, 48, 19), (111, 39, 23)):
+        x = 15 + int((base_x - 15 + elapsed * 5) % 150)
+        draw.rectangle((x, y, x + width, y + 3), fill=cloud_color)
+        draw.rectangle((x + 4, y - 2, x + width - 4, y + 3), fill=cloud_color)
+
+    clock_seconds = phase * 86_400
+    sun_progress = (clock_seconds - 6 * 3600) / (12 * 3600)
     sun_color = blend((248, 161, 96), (255, 225, 112), daytime)
-    if daytime > 0.05:
+    if 0 <= sun_progress <= 1:
+        sun_x = round(18 + sun_progress * 150)
+        sun_y = round(58 - 34 * math.sin(math.pi * sun_progress))
         draw.rectangle((sun_x - 5, sun_y - 5, sun_x + 5, sun_y + 5), fill=sun_color)
         draw.rectangle((sun_x - 3, sun_y - 7, sun_x + 3, sun_y + 7), fill=sun_color)
 
-    moon_x = round(24 + ((phase + 0.5) % 1.0) * 143)
-    moon_y = round(53 - 30 * math.sin(math.pi * ((phase + 0.5) % 1.0)))
+    moon_progress = ((clock_seconds - 18 * 3600) % 86_400) / (12 * 3600)
     moon_glow = blend(sky_top, (247, 239, 196), night)
     if night > 0.05:
+        moon_x = round(18 + moon_progress * 150)
+        moon_y = round(58 - 34 * math.sin(math.pi * moon_progress))
         draw.rectangle((moon_x - 4, moon_y - 5, moon_x + 4, moon_y + 5), fill=moon_glow)
         draw.rectangle((moon_x - 6, moon_y - 3, moon_x + 6, moon_y + 3), fill=moon_glow)
         for mask_y in range(moon_y - 6, moon_y + 5):
             mask_color = blend(sky_top, sky_bottom, (mask_y - 12) / 89)
             draw.line((moon_x - 1, mask_y, moon_x + 6, mask_y), fill=mask_color)
 
-    # Distant hills, tree line, and grassy foreground.
-    distant = blend((32, 47, 83), (101, 157, 129), daytime)
-    nearer = blend((22, 39, 58), (57, 117, 82), daytime)
-    ground = blend((24, 49, 49), (91, 151, 77), daytime)
-    draw.polygon(
-        [(12, 78), (34, 61), (51, 75), (73, 57), (97, 78),
-         (122, 62), (143, 77), (162, 59), (179, 74), (179, 101), (12, 101)],
-        fill=distant,
+    # Layered apartment blocks and towers form the urban skyline.
+    rear_color = blend((24, 34, 61), (112, 132, 147), daytime * 0.75)
+    front_color = blend((17, 25, 43), (75, 87, 94), daytime * 0.8)
+    roof_color = blend((43, 54, 76), (135, 145, 144), daytime * 0.7)
+    rear_buildings = (
+        (14, 21, 71), (29, 17, 61), (44, 20, 75), (63, 19, 65),
+        (81, 18, 53), (99, 19, 70), (118, 18, 60), (136, 20, 73),
+        (156, 21, 63),
     )
-    draw.polygon(
-        [(12, 85), (31, 76), (49, 84), (66, 72), (86, 87), (111, 73),
-         (132, 85), (153, 72), (179, 85), (179, 101), (12, 101)],
-        fill=nearer,
-    )
-    draw.rectangle((12, 91, 179, 101), fill=ground)
-    for x, y in ((20, 84), (45, 87), (82, 83), (119, 86), (151, 82), (171, 88)):
-        draw.rectangle((x, y - 5, x + 3, 91), fill=blend((18, 34, 43), (43, 91, 57), daytime))
-        draw.rectangle((x - 2, y - 9, x + 5, y - 5), fill=nearer)
-    for x in range(17, 177, 13):
-        draw.point((x, 94 + (x % 5)), fill=blend(ground, (174, 192, 101), daytime * 0.5))
+    for x, width, top in rear_buildings:
+        draw.rectangle((x, top, x + width - 1, 94), fill=rear_color)
+        draw.rectangle((x, top, x + width - 1, top + 1), fill=roof_color)
+        for row, y in enumerate(range(top + 5, 91, 7)):
+            for column, wx in enumerate(range(x + 3, x + width - 2, 6)):
+                if (row + column) % 3 != 1:
+                    window = blend((29, 43, 61), (244, 190, 103), night * 0.85)
+                    draw.rectangle((wx, y, wx + 2, y + 3), fill=window)
 
-    # A few blocky clouds drift across the sky.
-    cloud_color = blend((61, 74, 113), (239, 247, 248), daytime)
-    for base_x, y, width in ((37, 48, 19), (111, 39, 23)):
-        x = 15 + int((base_x - 15 + elapsed * 5) % 150)
-        if y < 75:
-            draw.rectangle((x, y, x + width, y + 3), fill=cloud_color)
-            draw.rectangle((x + 4, y - 2, x + width - 4, y + 3), fill=cloud_color)
+    front_buildings = (
+        (12, 17, 78), (30, 18, 70), (49, 17, 81), (67, 20, 73),
+        (88, 17, 63), (106, 19, 77), (126, 18, 68), (145, 19, 80),
+        (165, 15, 72),
+    )
+    for index, (x, width, top) in enumerate(front_buildings):
+        draw.rectangle((x, top, x + width - 1, 94), fill=front_color)
+        draw.rectangle((x, top, x + width - 1, top + 1), fill=roof_color)
+        if index in (1, 4, 7):
+            draw.rectangle((x + 4, top - 4, x + width - 5, top - 1), fill=roof_color)
+            draw.rectangle((x + width // 2, top - 10, x + width // 2, top - 5), fill=roof_color)
+        for row, y in enumerate(range(top + 5, 92, 7)):
+            for column, wx in enumerate(range(x + 3, x + width - 2, 6)):
+                glass = blend((33, 51, 68), (255, 192, 102), night * 0.9)
+                if (index + row + column * 2) % 4:
+                    draw.rectangle((wx, y, wx + 2, y + 3), fill=glass)
+
+    # Rooftop water tanks, antennas, street lamps, road, and passing cars.
+    draw.rectangle((37, 64, 44, 69), fill=roof_color)
+    draw.rectangle((38, 62, 43, 64), fill=roof_color)
+    draw.line((154, 66, 154, 57), fill=roof_color)
+    draw.line((151, 61, 157, 61), fill=roof_color)
+    road = blend((39, 47, 55), (94, 99, 96), daytime * 0.75)
+    draw.rectangle((12, 95, 179, 101), fill=road)
+    draw.rectangle((12, 94, 179, 95), fill=blend((75, 79, 79), (158, 157, 143), daytime))
+    draw.line((17, 99, 32, 99), fill=(177, 164, 115))
+    draw.line((64, 99, 79, 99), fill=(177, 164, 115))
+    draw.line((112, 99, 127, 99), fill=(177, 164, 115))
+    draw.line((158, 99, 173, 99), fill=(177, 164, 115))
+    for car_x, car_color in ((48, (166, 67, 55)), (133, (70, 105, 145))):
+        draw.rectangle((car_x, 96, car_x + 12, 99), fill=car_color)
+        draw.rectangle((car_x + 3, 94, car_x + 9, 96), fill=blend(car_color, (180, 209, 215), 0.55))
+        draw.point((car_x + 3, 100), fill=(15, 18, 23))
+        draw.point((car_x + 10, 100), fill=(15, 18, 23))
+    for lamp_x in (25, 169):
+        draw.rectangle((lamp_x, 78, lamp_x + 1, 94), fill=roof_color)
+        draw.rectangle((lamp_x - 2, 77, lamp_x + 3, 78), fill=blend((160, 133, 91), (255, 220, 138), night))
 
     # Thick pixel-art frame and sill sit in front of the outdoor view.
     draw.rectangle((0, 0, 191, 8), fill=(49, 28, 20))
@@ -130,7 +173,7 @@ def load_matrix_settings(config_path):
     return settings
 
 
-def run_matrix(settings, fps, cycle_seconds):
+def run_matrix(settings, fps):
     from rgbmatrix import RGBMatrix, RGBMatrixOptions
 
     options = RGBMatrixOptions()
@@ -152,7 +195,7 @@ def run_matrix(settings, fps, cycle_seconds):
     try:
         while True:
             elapsed = time.monotonic() - start
-            phase = (elapsed / cycle_seconds) % 1.0
+            phase = local_clock_phase()
             canvas.SetImage(draw_scene(phase, elapsed))
             canvas = matrix.SwapOnVSync(canvas)
             time.sleep(1 / fps)
@@ -165,34 +208,20 @@ def main():
     parser.add_argument("--config", default="config.ini", help="RGB matrix INI file")
     parser.add_argument("--fps", type=int, default=12, help="Animation frame rate")
     parser.add_argument(
-        "--cycle-seconds",
-        type=float,
-        default=120,
-        help="Duration of one complete day/night cycle",
-    )
-    parser.add_argument(
         "--preview",
         type=Path,
-        help="Save a still PNG preview instead of starting the LED matrix",
-    )
-    parser.add_argument(
-        "--phase",
-        type=float,
-        default=0.35,
-        help="Preview time from 0 (midnight) to 1 (next midnight)",
+        help="Save a still PNG preview at the current local time",
     )
     args = parser.parse_args()
-    if args.fps <= 0 or args.cycle_seconds <= 0:
-        parser.error("--fps and --cycle-seconds must be positive")
-    if not 0 <= args.phase < 1:
-        parser.error("--phase must be in the range [0, 1)")
+    if args.fps <= 0:
+        parser.error("--fps must be positive")
 
     if args.preview:
-        draw_scene(args.phase).save(args.preview)
+        draw_scene(local_clock_phase()).save(args.preview)
         print(f"Saved {WIDTH}x{HEIGHT} preview to {args.preview}")
     else:
         settings = load_matrix_settings(args.config)
-        run_matrix(settings, args.fps, args.cycle_seconds)
+        run_matrix(settings, args.fps)
 
 
 if __name__ == "__main__":
